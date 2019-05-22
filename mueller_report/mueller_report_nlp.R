@@ -1,3 +1,7 @@
+##################
+# Load libraries
+##################
+
 rm(list=ls())
 library(pacman)
 pacman::p_load(tidyverse,
@@ -10,9 +14,15 @@ pacman::p_load(tidyverse,
                reshape2,
                topicmodels)
 
+##################
+# Read dataset
+##################
 report <- data.table::fread("https://github.com/gadenbuie/mueller-report/raw/36fbb136a2a508c812db8773e9342b7a55204b20/mueller_report.csv",
                             data.table = FALSE)
 
+##################
+# Data Cleaning
+##################
 content <- report %>%
             filter(page >= 9, !is.na(text)) %>%
             rowwise() %>%
@@ -23,12 +33,48 @@ content <- report %>%
             select(-num_mispelled_words, -num_words)
 
 content <- content %>% 
-  unnest_tokens(text, text, token = "lines")
+  unnest_tokens(text, text, token = "lines") %>%
+  mutate(text = stringr::str_replace_all(text, c("uhtierfeti" = "under fed", 
+                                                 "uhaef" = "under",
+                                                 "uheer" = "under",
+                                                 "uncler" = "under",
+                                                 "uhder" = "under",
+                                                 "pretecteti" = "protected",
+                                                 "proteetecl" = "protected",
+                                                 "prnteetee" = "protected",
+                                                 "pfoettet" = "protected",
+                                                 "proteetee" = "protected",
+                                                 "proteeted" = "protected",
+                                                 "ma:tefittlproteetea" = "material protected",
+                                                 "cehtaihmaterial" = "contain material",
+                                                 "mttterittl" = "material",
+                                                 "prodttet" = "product",
+                                                 "preettet" = "product",
+                                                 "proauet" = "product",
+                                                 "fecl" = "fed",
+                                                 "fca" = "fed",
+                                                 "cofltttifl" = "contain",
+                                                 "cet'ttaih" = "contain",
+                                                 "cohtaih" = "contain",
+                                                 "amorttcy" = "attorney",
+                                                 "atteme" = "attorney",
+                                                 "attorhe" = "attorney",
+                                                 "weft" = "work",
+                                                 "werle" = "work",
+                                                 "depart ment" = "department",
+                                                 "mtty" = "may"
+  )))
 
+####################################
+# Normalizing and remove stop words
+####################################
 tidy_content <- content %>%
                   unnest_tokens(word, text) %>%
                   anti_join(stop_words)
 
+####################################
+# Visualize most popular words
+####################################
 tidy_content %>% 
   mutate(word = str_extract(word, "[a-z']+")) %>%
   filter(!is.na(word)) %>% 
@@ -50,7 +96,9 @@ tidy_content %>%
        caption = "Based on data from the Mueller Report")
 
 
-# Sentiment analysis
+####################################
+# Sentiment Analysis
+####################################
 afinn <- tidy_content %>%
           inner_join(get_sentiments("afinn")) %>%
           group_by(index = page %/% 20) %>%
@@ -75,7 +123,9 @@ bind_rows(afinn,
   facet_wrap(~method, ncol = 1, scales = "free_y") +
   theme_bw()
 
-## Most common positive and negative words
+####################################
+# Most common positive and negative words
+####################################
 bing_word_counts <- tidy_content %>%
                       inner_join(get_sentiments("bing")) %>%
                       count(word, sentiment, sort = TRUE) %>%
@@ -94,7 +144,9 @@ bing_word_counts %>%
   coord_flip() +
   theme_bw()
 
-## Wordclouds
+####################################
+# Word Clouds
+####################################
 tidy_content %>%
   count(word) %>%
   with(wordcloud(word, n, max.words = 100))
@@ -106,10 +158,9 @@ tidy_content %>%
   comparison.cloud(colors = c("#D95F02", "#1B9E77"),
                    max.words = 100)
   
-## Beyond just words
-# pnp_sentences <- content %>%
-#                   unnest_tokens(sentence, text, token = "sentences")
-
+####################################
+# Beyond just words
+####################################
 bingnegative <- get_sentiments("bing") %>%
                   filter(sentiment == "negative")
 
@@ -117,7 +168,7 @@ wordcounts <- tidy_content %>%
               group_by(page) %>%
               summarise(words = n())
 
-## Highest ratio of negative words that has >= 100 words on a page
+# Highest ratio of negative words that has >= 100 words on a page
 tidy_content %>%
   semi_join(bingnegative) %>%
   group_by(page) %>%
@@ -126,24 +177,33 @@ tidy_content %>%
   mutate(ratio = negativewords/words) %>%
   ungroup() %>%
   filter(words >= 100) %>%
-  arrange(desc(ratio)) 
+  arrange(desc(ratio)) %>%
+  top_n(5)
 
 
+#########################################################
 # TFIDF (Term Frequency Inverse Document Frequency)
+#########################################################
+
 tidy_content %>%
   count(word, page,  sort = TRUE) %>%
   bind_tf_idf(word, page, n) %>%
   arrange(desc(tf_idf)) %>%
   top_n(15) %>%
-  mutate(word = reorder(word, tf_idf)) %>%
-  ggplot(aes(word, tf_idf)) +
+  mutate(word_page = paste(word, page, sep = "_")) %>%
+  mutate(word_page = reorder(word_page, tf_idf)) %>%
+  ggplot(aes(word_page, tf_idf)) +
   geom_col(show.legend = FALSE) +
-  labs(x = NULL, y = "tf-idf") +
+  labs(x = "", y = "tf-idf of term and page#") +
   coord_flip() +
   theme_bw()
 
 
-# bigrams
+
+
+###########################
+# Bigram
+###########################
 bigram_tf_idf <- content %>%
                   unnest_tokens(bigram, text, token = "ngrams", n = 2) %>%
                   separate(bigram, c("word1", "word2"), sep = " ") %>%
@@ -157,15 +217,19 @@ bigram_tf_idf <- content %>%
 # Top bigram tf-idf
 bigram_tf_idf %>%
   top_n(15) %>%
-  mutate(bigram = reorder(bigram, tf_idf)) %>%
-ggplot(aes(x = bigram, y = tf_idf)) +
+  mutate(bigram_page = paste(bigram, page, sep = "_")) %>%
+  mutate(bigram_page = reorder(bigram_page, tf_idf)) %>%
+  mutate(bigram_page = reorder(bigram_page, tf_idf)) %>%
+ggplot(aes(x = bigram_page, y = tf_idf)) +
   geom_col(show.legend = FALSE) +
-  labs(x = NULL, y = "tf-idf of bigram") +
+  labs(x = NULL, y = "tf-idf of bigram by page") +
   coord_flip() +
   theme_bw()
 
 
+###########################
 # Topic modeling
+###########################
 dtm_content <- tidy_content %>%
   count(word, page, sort = TRUE) %>%
   rename(count = n) %>% 
@@ -182,7 +246,7 @@ lda_top_terms <- lda_topics %>%
                   ungroup() %>%
                   arrange(topic, -beta)
 
-# 2 topics
+# 2 topics based on top 10 beta values
 lda_top_terms %>%
   mutate(term = reorder(term, beta)) %>%
   ggplot(aes(term, beta, fill = factor(topic))) +
@@ -213,7 +277,7 @@ ggplot(aes(x = term, y = log_ratio)) +
   geom_col(show.legend = FALSE) +
   coord_flip() +
   theme_bw() +
-  labs(x = "Log2 ratio of beta in topic 2 / topic 1")
+  labs(y = "Log2 ratio of beta in topic 2 / topic 1")
   
   
   
